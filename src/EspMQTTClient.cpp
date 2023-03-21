@@ -1,70 +1,22 @@
 #include "EspMQTTClient.h"
 
 
-// =============== Constructor / destructor ===================
-
-// default constructor
-EspMQTTClient::EspMQTTClient(
-  const uint16_t mqttServerPort,
-  const char* mqttClientName) :
-  EspMQTTClient(nullptr, mqttServerPort, mqttClientName)
+EspMQTTClient::EspMQTTClient(const char* location, const char* mqttUsername, const char* mqttPassword) : 
+_mqttClientName(location),
+_mqttUsername(mqttUsername),
+_mqttPassword(mqttPassword)
 {
-}
-
-// MQTT only (no wifi connection attempt)
-EspMQTTClient::EspMQTTClient(
-  const char* mqttServerIp,
-  const uint16_t mqttServerPort,
-  const char* mqttClientName) :
-  EspMQTTClient(NULL, NULL, mqttServerIp, NULL, NULL, mqttClientName, mqttServerPort)
-{
-}
-
-EspMQTTClient::EspMQTTClient(
-  const char* mqttServerIp,
-  const uint16_t mqttServerPort,
-  const char* mqttUsername,
-  const char* mqttPassword,
-  const char* mqttClientName) :
-  EspMQTTClient(NULL, NULL, mqttServerIp, mqttUsername, mqttPassword, mqttClientName, mqttServerPort)
-{
-}
-
-// Wifi and MQTT handling
-EspMQTTClient::EspMQTTClient(
-  const char* wifiSsid,
-  const char* wifiPassword,
-  const char* mqttServerIp,
-  const char* mqttClientName,
-  const uint16_t mqttServerPort) :
-  EspMQTTClient(wifiSsid, wifiPassword, mqttServerIp, NULL, NULL, mqttClientName, mqttServerPort)
-{
-}
-
-EspMQTTClient::EspMQTTClient(
-  const char* wifiSsid,
-  const char* wifiPassword,
-  const char* mqttServerIp,
-  const char* mqttUsername,
-  const char* mqttPassword,
-  const char* mqttClientName,
-  const uint16_t mqttServerPort) :
-  _wifiSsid(wifiSsid),
-  _wifiPassword(wifiPassword),
-  _mqttServerIp(mqttServerIp),
-  _mqttUsername(mqttUsername),
-  _mqttPassword(mqttPassword),
-  _mqttClientName(mqttClientName),
-  _mqttServerPort(mqttServerPort),
-  _mqttClient(mqttServerIp, mqttServerPort, _wifiClient)
-{
+  // _mqttClient(mqttServerIp, mqttServerPort, _wifiClient)
+  _mqttClient.setClient(_wifiClient);
   // WiFi connection
-  _handleWiFi = (wifiSsid != NULL);
+  _handleWiFi = true;
   _wifiConnected = false;
   _connectingToWifi = false;
   _nextWifiConnectionAttemptMillis = 500;
   _lastWifiConnectionAttemptMillis = 0;
   _wifiReconnectionAttemptDelay = 60 * 1000;
+  _failedWifiConnectionAttemptCount = 0;
+  _max_uptime_server_minutes = 3; //nur wenn aktiv!
 
   // MQTT client
   _mqttConnected = false;
@@ -76,6 +28,8 @@ EspMQTTClient::EspMQTTClient(
   _mqttCleanSession = true;
   _mqttClient.setCallback([this](char* topic, uint8_t* payload, unsigned int length) {this->mqttMessageReceivedCallback(topic, payload, length);});
   _failedMQTTConnectionAttemptCount = 0;
+  _sleep = false;
+  _loopcount = 0;
 
   // HTTP/OTA update related
   _updateServerAddress = NULL;
@@ -159,10 +113,21 @@ void EspMQTTClient::enableLastWillMessage(const char* topic, const char* message
 
 // =============== Main loop / connection state handling =================
 
+void EspMQTTClient::go_to_sleep(unsigned int deepsleeptime_minutes){
+  if(!_sleep){
+    _deepsleeptime_minutes = deepsleeptime_minutes;
+    _loopcount = 0;
+    _sleep = true;
+    if(_enableDebugMessages){
+      Serial.println("Sleep activated");
+    }
+  }
+}
+
 void EspMQTTClient::loop()
 {
+  _wifiManager.process();
   bool wifiStateChanged = handleWiFi();
-
   // If there is a change in the wifi connection state, don't handle the mqtt connection state right away.
   // We will wait at least one lopp() call. This prevent the library from doing too much thing in the same loop() call.
   if(wifiStateChanged)
@@ -173,6 +138,18 @@ void EspMQTTClient::loop()
   if(mqttStateChanged)
     return;
 
+  if (
+        ((_sleep && getConnectionEstablishedCount() > 0) || (_sleep && _failedWifiConnectionAttemptCount > 1)) && !_wifiManager.WifiAP_active(_max_uptime_server_minutes)){
+    //only go to sleep if connected or at least one reconnection attempt was made to prevent too early sleep)
+    _loopcount++;
+    if(_loopcount > 10){
+      if(_enableDebugMessages){
+        Serial.println("Going to sleep");
+      }
+      ESP.deepSleep(_deepsleeptime_minutes*60000000);
+      delay(100);
+    }
+  }
   processDelayedExecutionRequests();
 }
 
@@ -188,7 +165,7 @@ bool EspMQTTClient::handleWiFi()
     return true;
   }
 
-  // Get the current connextion status
+  // Get the current connection status
   bool isWifiConnected = (WiFi.status() == WL_CONNECTED);
 
 
@@ -210,7 +187,8 @@ bool EspMQTTClient::handleWiFi()
   // Connection in progress
   else if(_connectingToWifi)
   {
-      if(WiFi.status() == WL_CONNECT_FAILED || millis() - _lastWifiConnectionAttemptMillis >= _wifiReconnectionAttemptDelay)
+      if((WiFi.status() == WL_CONNECT_FAILED || millis() - _lastWifiConnectionAttemptMillis >= _wifiReconnectionAttemptDelay) && 
+          !_wifiManager.WifiAP_active(_max_uptime_server_minutes))
       {
         if(_enableDebugMessages)
           Serial.printf("WiFi! Connection attempt failed, delay expired. (%fs). \n", millis()/1000.0);
@@ -256,6 +234,7 @@ bool EspMQTTClient::handleWiFi()
     _nextWifiConnectionAttemptMillis = 0;
     _connectingToWifi = true;
     _lastWifiConnectionAttemptMillis = millis();
+    _failedWifiConnectionAttemptCount++;
   }
 
   /**** Detect and return if there was a change in the WiFi state ****/
@@ -269,7 +248,6 @@ bool EspMQTTClient::handleWiFi()
     return false;
 }
 
-
 bool EspMQTTClient::handleMQTT()
 {
   // PubSubClient main loop() call
@@ -277,7 +255,6 @@ bool EspMQTTClient::handleMQTT()
 
   // Get the current connextion status
   bool isMqttConnected = (isWifiConnected() && _mqttClient.connected());
-
 
   /***** Detect and handle the current MQTT handling state *****/
 
@@ -353,9 +330,9 @@ bool EspMQTTClient::handleMQTT()
     return false;
 }
 
-
 void EspMQTTClient::onWiFiConnectionEstablished()
 {
+    _failedWifiConnectionAttemptCount = 0;
     if (_enableDebugMessages)
       Serial.printf("WiFi: Connected (%fs), ip : %s \n", millis()/1000.0, WiFi.localIP().toString().c_str());
 
@@ -438,10 +415,8 @@ bool EspMQTTClient::publish(const char* topic, const uint8_t* payload, unsigned 
     else
       Serial.println("MQTT! publish failed, is the message too long ? (see setMaxPacketSize())"); // This can occurs if the message is too long according to the maximum defined in PubsubClient.h
   }
-
   return success;
 }
-
 
 bool EspMQTTClient::publish(const String &topic, const String &payload, bool retain)
 {
@@ -534,13 +509,6 @@ void EspMQTTClient::setKeepAlive(uint16_t keepAliveSeconds)
   _mqttClient.setKeepAlive(keepAliveSeconds);
 }
 
-void EspMQTTClient::setWifiCredentials(const char* wifiSsid, const char* wifiPassword)
-{
-  _wifiSsid = wifiSsid;
-  _wifiPassword = wifiPassword;
-  _handleWiFi = true;
-}
-
 void EspMQTTClient::executeDelayed(const unsigned long delay, DelayedExecutionCallback callback)
 {
   DelayedExecutionRecord delayedExecutionRecord;
@@ -556,16 +524,15 @@ void EspMQTTClient::executeDelayed(const unsigned long delay, DelayedExecutionCa
 // Initiate a Wifi connection (non-blocking)
 void EspMQTTClient::connectToWifi()
 {
-  WiFi.mode(WIFI_STA);
-  #ifdef ESP32
-    WiFi.setHostname(_mqttClientName);
-  #else
-    WiFi.hostname(_mqttClientName);
-  #endif
-  WiFi.begin(_wifiSsid, _wifiPassword);
-
-  if (_enableDebugMessages)
-    Serial.printf("\nWiFi: Connecting to %s ... (%fs) \n", _wifiSsid, millis()/1000.0);
+  if(!_wifiManager.WifiAP_active(_max_uptime_server_minutes)){
+    WiFi.mode(WIFI_STA);
+    _wifiManager.setConfigPortalBlocking(false);
+    _wifiManager.setDebugOutput(true);
+    // _wifiManager.setConfigPortalTimeout(60); //timeout in sekunden, danach geht code einfach weiter (ohne internet)
+    _wifiManager.autoConnect(_mqttClientName,"MeinWifiManagerPasswort");
+    if (_enableDebugMessages)
+      Serial.printf("\nWiFi: Connecting to WIFI... (%fs) \n", millis()/1000.0);
+  }
 }
 
 // Try to connect to the MQTT broker and return True if the connection is successfull (blocking)

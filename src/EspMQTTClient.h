@@ -4,6 +4,7 @@
 #include <ArduinoOTA.h>
 #include <PubSubClient.h>
 #include <vector>
+#include <WiFiManager.h>  
 
 #ifdef ESP8266
 
@@ -39,6 +40,8 @@ typedef std::function<void()> DelayedExecutionCallback;
 class EspMQTTClient
 {
 private:
+  unsigned int _deepsleeptime_minutes;
+
   // Wifi related
   bool _handleWiFi;
   bool _wifiConnected;
@@ -46,26 +49,30 @@ private:
   unsigned long _lastWifiConnectionAttemptMillis;
   unsigned long _nextWifiConnectionAttemptMillis;
   unsigned int _wifiReconnectionAttemptDelay;
-  const char* _wifiSsid;
-  const char* _wifiPassword;
+  unsigned int _failedWifiConnectionAttemptCount;
+  unsigned int _max_uptime_server_minutes;
+
   WiFiClient _wifiClient;
 
   // MQTT related
   bool _mqttConnected;
   unsigned long _nextMqttConnectionAttemptMillis;
   unsigned int _mqttReconnectionAttemptDelay;
-  const char* _mqttServerIp;
+  const char* _mqttServerIp = "192.168.178.70";
   const char* _mqttUsername;
   const char* _mqttPassword;
   const char* _mqttClientName;
-  uint16_t _mqttServerPort;
+  uint16_t _mqttServerPort = 1883;
   bool _mqttCleanSession;
   char* _mqttLastWillTopic;
   char* _mqttLastWillMessage;
   bool _mqttLastWillRetain;
   unsigned int _failedMQTTConnectionAttemptCount;
+  unsigned int _loopcount;
+  bool _sleep;
 
   PubSubClient _mqttClient;
+  WiFiManager _wifiManager;
 
   struct TopicSubscriptionRecord {
     String topic;
@@ -96,43 +103,7 @@ private:
   unsigned int _connectionEstablishedCount; // Incremented before each _connectionEstablishedCallback call
 
 public:
-  EspMQTTClient(
-    // port and client name are swapped here to prevent a collision with the MQTT w/o auth constructor
-    const uint16_t mqttServerPort = 1883,
-    const char* mqttClientName = DEFAULT_MQTT_CLIENT_NAME);
-
-  /// Wifi + MQTT with no MQTT authentification
-  EspMQTTClient(
-    const char* wifiSsid,
-    const char* wifiPassword,
-    const char* mqttServerIp,
-    const char* mqttClientName = DEFAULT_MQTT_CLIENT_NAME,
-    const uint16_t mqttServerPort = 1883);
-
-  /// Wifi + MQTT with MQTT authentification
-  EspMQTTClient(
-    const char* wifiSsid,
-    const char* wifiPassword,
-    const char* mqttServerIp,
-    const char* mqttUsername,
-    const char* mqttPassword,
-    const char* mqttClientName = DEFAULT_MQTT_CLIENT_NAME,
-    const uint16_t mqttServerPort = 1883);
-
-  /// Only MQTT handling (no wifi), with MQTT authentification
-  EspMQTTClient(
-    const char* mqttServerIp,
-    const uint16_t mqttServerPort,
-    const char* mqttUsername,
-    const char* mqttPassword,
-    const char* mqttClientName = DEFAULT_MQTT_CLIENT_NAME);
-
-  /// Only MQTT handling without MQTT authentification
-  EspMQTTClient(
-    const char* mqttServerIp,
-    const uint16_t mqttServerPort,
-    const char* mqttClientName = DEFAULT_MQTT_CLIENT_NAME);
-
+  EspMQTTClient(const char* location, const char* mqttUsername = NULL, const char* mqttPassword = NULL);
   ~EspMQTTClient();
 
   // Optional functionality
@@ -163,9 +134,10 @@ public:
     _mqttPassword   = password;
     _mqttServerPort = port;
   };
+  void go_to_sleep(unsigned int deepsleeptime_minutes);
 
   // Wifi related
-  void setWifiCredentials(const char* wifiSsid, const char* wifiPassword);
+  // void setWifiCredentials(const char* wifiSsid, const char* wifiPassword);
 
   // Other
   void executeDelayed(const unsigned long delay, DelayedExecutionCallback callback);
@@ -174,6 +146,8 @@ public:
   inline bool isWifiConnected() const { return _wifiConnected; }; // Return true if wifi is connected
   inline bool isMqttConnected() const { return _mqttConnected; }; // Return true if mqtt is connected
   inline unsigned int getConnectionEstablishedCount() const { return _connectionEstablishedCount; }; // Return the number of time onConnectionEstablished has been called since the beginning.
+  inline unsigned int getFailedWifiConnectionCount() const { return _failedWifiConnectionAttemptCount; };
+  inline unsigned int getFailedMQTTConnectionCount() const { return _failedMQTTConnectionAttemptCount; };
 
   inline const char* getMqttClientName() { return _mqttClientName; };
   inline const char* getMqttServerIp() { return _mqttServerIp; };
