@@ -395,7 +395,7 @@ bool EspMQTTClient::setMaxPacketSize(const uint16_t size)
   return success;
 }
 
-bool EspMQTTClient::publish(const char* topic, const uint8_t* payload, unsigned int plength, bool retain)
+bool EspMQTTClient::publish(const char* measurement, float data, bool persist, const char* custom_location)
 {
   // Do not try to publish if MQTT is not connected.
   if(!isConnected())
@@ -406,24 +406,35 @@ bool EspMQTTClient::publish(const char* topic, const uint8_t* payload, unsigned 
     return false;
   }
 
-  bool success = _mqttClient.publish(topic, payload, plength, retain);
+  const char* location = _mqttClientName;
+
+  if(custom_location != NULL){
+      location = custom_location;
+  }
+
+  String dummy = String(data);
+  char to_send[dummy.length() + 1];
+  dummy.toCharArray(to_send, dummy.length() + 1);
+  char topic[strlen(location)+strlen(measurement)+6+1];
+  strcpy(topic, "home/");
+  strcat(topic, location);
+  strcat(topic, "/");
+  strcat(topic, measurement);
+  const char* topic_mqtt = topic;
+
+  bool success = _mqttClient.publish(topic_mqtt, to_send, persist);
 
   if (_enableDebugMessages)
   {
     if(success)
-      Serial.printf("MQTT << [%s] %s\n", topic, payload);
+      Serial.printf("MQTT << [%s] %s\n", topic_mqtt, to_send);
     else
       Serial.println("MQTT! publish failed, is the message too long ? (see setMaxPacketSize())"); // This can occurs if the message is too long according to the maximum defined in PubsubClient.h
   }
   return success;
 }
 
-bool EspMQTTClient::publish(const String &topic, const String &payload, bool retain)
-{
-  return publish(topic.c_str(), (const uint8_t*) payload.c_str(), payload.length(), retain);
-}
-
-bool EspMQTTClient::subscribe(const String &topic, MessageReceivedCallback messageReceivedCallback, uint8_t qos)
+bool EspMQTTClient::subscribe(const char* measurement,  int qos, MessageReceivedCallback messageReceivedCallback, const char* custom_location)
 {
   // Do not try to subscribe if MQTT is not connected.
   if(!isConnected())
@@ -434,7 +445,19 @@ bool EspMQTTClient::subscribe(const String &topic, MessageReceivedCallback messa
     return false;
   }
 
-  bool success = _mqttClient.subscribe(topic.c_str(), qos);
+  const char* location = _mqttClientName;
+
+  if(custom_location != NULL){
+      location = custom_location;
+  }
+
+  char topic[strlen(location)+strlen(measurement)+6+1];
+  strcpy(topic, "home/");
+  strcat(topic, location);
+  strcat(topic, "/");
+  strcat(topic, measurement);
+
+  bool success = _mqttClient.subscribe(topic, qos);
 
   if(success)
   {
@@ -450,7 +473,7 @@ bool EspMQTTClient::subscribe(const String &topic, MessageReceivedCallback messa
   if (_enableDebugMessages)
   {
     if(success)
-      Serial.printf("MQTT: Subscribed to [%s]\n", topic.c_str());
+      Serial.printf("MQTT: Subscribed to [%s]\n", topic);
     else
       Serial.println("MQTT! subscribe failed");
   }
@@ -458,15 +481,6 @@ bool EspMQTTClient::subscribe(const String &topic, MessageReceivedCallback messa
   return success;
 }
 
-bool EspMQTTClient::subscribe(const String &topic, MessageReceivedCallbackWithTopic messageReceivedCallback, uint8_t qos)
-{
-  if(subscribe(topic, (MessageReceivedCallback)NULL, qos))
-  {
-    _topicSubscriptionList[_topicSubscriptionList.size()-1].callbackWithTopic = messageReceivedCallback;
-    return true;
-  }
-  return false;
-}
 
 bool EspMQTTClient::unsubscribe(const String &topic)
 {
@@ -518,6 +532,32 @@ void EspMQTTClient::executeDelayed(const unsigned long delay, DelayedExecutionCa
   _delayedExecutionList.push_back(delayedExecutionRecord);
 }
 
+float EspMQTTClient::payload_to_float(byte* payload, unsigned int length){
+    float result = 0;
+    int dezimal = 0;
+    for(int i=0;i<length;i++){
+        char c = payload[i];
+        // Serial.println(c);
+        if (c >= '0' && c <= '9'){
+            if(dezimal == 0){
+                result = result*10 + (c - '0');
+            }
+            else{
+                result = result + (c - '0')*pow(0.1,dezimal);
+                dezimal++;
+            }
+        }
+        else if ( c == '.' || c ==','){
+            dezimal = 1;
+        }
+        else {
+            Serial.print ((float)c);
+            Serial.println(" war so nicht erwartet");
+            return(-1);
+        }
+    }
+    return(result);
+}
 
 // ================== Private functions ====================-
 

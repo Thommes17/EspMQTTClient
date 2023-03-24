@@ -121,10 +121,8 @@ public:
   // MQTT related
   bool setMaxPacketSize(const uint16_t size); // Pubsubclient >= 2.8; override the default value of MQTT_MAX_PACKET_SIZE
 
-  bool publish(const char* topic, const uint8_t* payload, unsigned int plenght, bool retain);
-  bool publish(const String &topic, const String &payload, bool retain = false);
-  bool subscribe(const String &topic, MessageReceivedCallback messageReceivedCallback, uint8_t qos = 0);
-  bool subscribe(const String &topic, MessageReceivedCallbackWithTopic messageReceivedCallback, uint8_t qos = 0);
+  bool publish(const char* measurement, float data, bool persist = true, const char* custom_location = NULL);
+  bool subscribe(const char* measurement,  int qos, MessageReceivedCallback messageReceivedCallback, const char* custom_location = NULL);
   bool unsubscribe(const String &topic);   //Unsubscribes from the topic, if it exists, and removes it from the CallbackList.
   void setKeepAlive(uint16_t keepAliveSeconds); // Change the keepalive interval (15 seconds by default)
   inline void setMqttClientName(const char* name) { _mqttClientName = name; }; // Allow to set client name manually (must be done in setup(), else it will not work.)
@@ -135,6 +133,7 @@ public:
     _mqttServerPort = port;
   };
   void go_to_sleep(unsigned int deepsleeptime_minutes);
+  float payload_to_float(byte* payload, unsigned int length);
 
   // Wifi related
   // void setWifiCredentials(const char* wifiSsid, const char* wifiPassword);
