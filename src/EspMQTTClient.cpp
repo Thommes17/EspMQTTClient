@@ -1,6 +1,5 @@
 #include "EspMQTTClient.h"
 
-
 EspMQTTClient::EspMQTTClient(const char* location, const char* mqttUsername, const char* mqttPassword) : 
 _mqttClientName(location),
 _mqttUsername(mqttUsername),
@@ -26,16 +25,19 @@ _mqttPassword(mqttPassword)
   _mqttLastWillMessage = 0;
   _mqttLastWillRetain = false;
   _mqttCleanSession = true;
-  _mqttClient.setCallback([this](char* topic, uint8_t* payload, unsigned int length) {this->mqttMessageReceivedCallback(topic, payload, length);});
+  _mqttClient.setCallback([this](char* topic, byte* payload, unsigned int length) {this->mqttMessageReceivedCallback(topic, payload, length);});
   _failedMQTTConnectionAttemptCount = 0;
   _sleep = false;
   _loopcount = 0;
+  _looptime_millis = 0;
+  _publish_Wifi_RSSI = false;
 
   // HTTP/OTA update related
   _updateServerAddress = NULL;
   _httpServer = NULL;
   _httpUpdater = NULL;
   _enableOTA = false;
+  _OTA_via_MQTT = false;
 
   // other
   _enableDebugMessages = false;
@@ -117,6 +119,7 @@ void EspMQTTClient::go_to_sleep(unsigned int deepsleeptime_minutes){
   if(!_sleep){
     _deepsleeptime_minutes = deepsleeptime_minutes;
     _loopcount = 0;
+    _looptime_millis = millis(); 
     _sleep = true;
     if(_enableDebugMessages){
       Serial.println("Sleep activated");
@@ -138,11 +141,10 @@ void EspMQTTClient::loop()
   if(mqttStateChanged)
     return;
 
-  if (
-        ((_sleep && getConnectionEstablishedCount() > 0) || (_sleep && _failedWifiConnectionAttemptCount > 1)) && !_wifiManager.WifiAP_active(_max_uptime_server_minutes)){
+  if (!_OTA_via_MQTT && ((_sleep && getConnectionEstablishedCount() > 0) || (_sleep && _failedWifiConnectionAttemptCount > 1)) && !_wifiManager.WifiAP_active(_max_uptime_server_minutes)){
     //only go to sleep if connected or at least one reconnection attempt was made to prevent too early sleep)
     _loopcount++;
-    if(_loopcount > 10){
+    if(_loopcount > 10 && (millis() - _looptime_millis) > 5000){//loop at least 10 times and at least for 5s
       if(_enableDebugMessages){
         Serial.println("Going to sleep");
       }
@@ -368,6 +370,10 @@ void EspMQTTClient::onWiFiConnectionLost()
 void EspMQTTClient::onMQTTConnectionEstablished()
 {
   _connectionEstablishedCount++;
+  if (_publish_Wifi_RSSI){
+    publish("WIFI_RSSI",WiFi.RSSI(),false);
+  }
+  subscribe("OTA_Update",1, [this](const String &topicStr, byte* payload, unsigned int length) {this->OTA_via_MQTT_callback(topicStr, payload, length);});
   _connectionEstablishedCallback();
 }
 
@@ -380,9 +386,7 @@ void EspMQTTClient::onMQTTConnectionLost()
   }
 }
 
-
 // =============== Public functions for interaction with thus lib =================
-
 
 bool EspMQTTClient::setMaxPacketSize(const uint16_t size)
 {
@@ -430,11 +434,13 @@ bool EspMQTTClient::publish(const char* measurement, float data, bool persist, c
       Serial.printf("MQTT << [%s] %s\n", topic_mqtt, to_send);
     else
       Serial.println("MQTT! publish failed, is the message too long ? (see setMaxPacketSize())"); // This can occurs if the message is too long according to the maximum defined in PubsubClient.h
+      Serial.println(topic_mqtt);
+      Serial.println(to_send);
   }
   return success;
 }
 
-bool EspMQTTClient::subscribe(const char* measurement,  int qos, MessageReceivedCallback messageReceivedCallback, const char* custom_location)
+bool EspMQTTClient::subscribe(const char* measurement,  int qos, MessageReceivedCallbackWithTopic messageReceivedCallbackWithTopic, const char* custom_location)
 {
   // Do not try to subscribe if MQTT is not connected.
   if(!isConnected())
@@ -467,7 +473,7 @@ bool EspMQTTClient::subscribe(const char* measurement,  int qos, MessageReceived
       found = _topicSubscriptionList[i].topic.equals(topic);
 
     if(!found)
-      _topicSubscriptionList.push_back({ topic, messageReceivedCallback, NULL });
+      _topicSubscriptionList.push_back({ topic, NULL, messageReceivedCallbackWithTopic });
   }
 
   if (_enableDebugMessages)
@@ -480,7 +486,6 @@ bool EspMQTTClient::subscribe(const char* measurement,  int qos, MessageReceived
 
   return success;
 }
-
 
 bool EspMQTTClient::unsubscribe(const String &topic)
 {
@@ -535,7 +540,7 @@ void EspMQTTClient::executeDelayed(const unsigned long delay, DelayedExecutionCa
 float EspMQTTClient::payload_to_float(byte* payload, unsigned int length){
     float result = 0;
     int dezimal = 0;
-    for(int i=0;i<length;i++){
+    for(unsigned int i=0;i<length;i++){
         char c = payload[i];
         // Serial.println(c);
         if (c >= '0' && c <= '9'){
@@ -557,6 +562,21 @@ float EspMQTTClient::payload_to_float(byte* payload, unsigned int length){
         }
     }
     return(result);
+}
+
+void EspMQTTClient::OTA_via_MQTT_callback(const String &topicStr, byte* payload, unsigned int length){
+  if (payload_to_float(payload,length) == 1){
+    _OTA_via_MQTT = true;
+    if(_enableDebugMessages){
+      Serial.println("OTA via MQTT enabled");
+    }
+  }
+  else{
+    _OTA_via_MQTT = false; //important! otherwise, it will be in OTA mode forever even if deactivated via MQTT 
+    if(_enableDebugMessages){
+      Serial.println("OTA via MQTT disabled");
+    }
+  }
 }
 
 // ================== Private functions ====================-
@@ -723,7 +743,7 @@ bool EspMQTTClient::mqttTopicMatch(const String &topic1, const String &topic2)
   return !(topic1_p < topic1_end || topic2_p < topic2_end);
 }
 
-void EspMQTTClient::mqttMessageReceivedCallback(char* topic, uint8_t* payload, unsigned int length)
+void EspMQTTClient::mqttMessageReceivedCallback(char* topic, byte* payload, unsigned int length)
 {
   // Convert the payload into a String
   // First, We ensure that we dont bypass the maximum size of the PubSubClient library buffer that originated the payload
@@ -756,7 +776,7 @@ void EspMQTTClient::mqttMessageReceivedCallback(char* topic, uint8_t* payload, u
       if(_topicSubscriptionList[i].callback != NULL)
         _topicSubscriptionList[i].callback(payloadStr); // Call the callback
       if(_topicSubscriptionList[i].callbackWithTopic != NULL)
-        _topicSubscriptionList[i].callbackWithTopic(topicStr, payloadStr); // Call the callback
+        _topicSubscriptionList[i].callbackWithTopic(topicStr, payload, length); // Call the callback
     }
   }
 }

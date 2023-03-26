@@ -34,7 +34,7 @@ void onConnectionEstablished(); // MUST be implemented in your sketch. Called on
 
 typedef std::function<void()> ConnectionEstablishedCallback;
 typedef std::function<void(const String &message)> MessageReceivedCallback;
-typedef std::function<void(const String &topicStr, const String &message)> MessageReceivedCallbackWithTopic;
+typedef std::function<void(const String &topicStr, byte* payload, unsigned int length)> MessageReceivedCallbackWithTopic;
 typedef std::function<void()> DelayedExecutionCallback;
 
 class EspMQTTClient
@@ -69,7 +69,9 @@ private:
   bool _mqttLastWillRetain;
   unsigned int _failedMQTTConnectionAttemptCount;
   unsigned int _loopcount;
+  unsigned long _looptime_millis;
   bool _sleep;
+  bool _publish_Wifi_RSSI;
 
   PubSubClient _mqttClient;
   WiFiManager _wifiManager;
@@ -88,6 +90,7 @@ private:
   WebServer* _httpServer;
   ESPHTTPUpdateServer* _httpUpdater;
   bool _enableOTA;
+  bool _OTA_via_MQTT;
 
   // Delayed execution related
   struct DelayedExecutionRecord {
@@ -122,7 +125,7 @@ public:
   bool setMaxPacketSize(const uint16_t size); // Pubsubclient >= 2.8; override the default value of MQTT_MAX_PACKET_SIZE
 
   bool publish(const char* measurement, float data, bool persist = true, const char* custom_location = NULL);
-  bool subscribe(const char* measurement,  int qos, MessageReceivedCallback messageReceivedCallback, const char* custom_location = NULL);
+  bool subscribe(const char* measurement,  int qos, MessageReceivedCallbackWithTopic messageReceivedCallbackWithTopic, const char* custom_location = NULL);
   bool unsubscribe(const String &topic);   //Unsubscribes from the topic, if it exists, and removes it from the CallbackList.
   void setKeepAlive(uint16_t keepAliveSeconds); // Change the keepalive interval (15 seconds by default)
   inline void setMqttClientName(const char* name) { _mqttClientName = name; }; // Allow to set client name manually (must be done in setup(), else it will not work.)
@@ -133,8 +136,9 @@ public:
     _mqttServerPort = port;
   };
   void go_to_sleep(unsigned int deepsleeptime_minutes);
+  inline void enable_publish_Wifi_RSSI() {_publish_Wifi_RSSI = true;};
   float payload_to_float(byte* payload, unsigned int length);
-
+  void OTA_via_MQTT_callback(const String &topicStr, byte* payload, unsigned int length);
   // Wifi related
   // void setWifiCredentials(const char* wifiSsid, const char* wifiPassword);
 
@@ -173,7 +177,7 @@ private:
   bool connectToMqttBroker();
   void processDelayedExecutionRequests();
   bool mqttTopicMatch(const String &topic1, const String &topic2);
-  void mqttMessageReceivedCallback(char* topic, uint8_t* payload, unsigned int length);
+  void mqttMessageReceivedCallback(char* topic, byte* payload, unsigned int length);
 };
 
 #endif
