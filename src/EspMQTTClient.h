@@ -31,8 +31,10 @@
 #endif
 
 void onConnectionEstablished(); // MUST be implemented in your sketch. Called once everythings is connected (Wifi, mqtt).
+void onNoWifiConnection();
 
 typedef std::function<void()> ConnectionEstablishedCallback;
+typedef std::function<void()> NoWifiCallback;
 typedef std::function<void(const String &message)> MessageReceivedCallback;
 typedef std::function<void(const String &topicStr, byte* payload, unsigned int length)> MessageReceivedCallbackWithTopic;
 typedef std::function<void()> DelayedExecutionCallback;
@@ -101,6 +103,7 @@ private:
 
   // General behaviour related
   ConnectionEstablishedCallback _connectionEstablishedCallback;
+  NoWifiCallback _NoWifiCallback;
   bool _enableDebugMessages;
   bool _drasticResetOnConnectionFailures;
   unsigned int _connectionEstablishedCount; // Incremented before each _connectionEstablishedCallback call

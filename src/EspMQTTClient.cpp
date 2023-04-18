@@ -13,7 +13,7 @@ _mqttPassword(mqttPassword)
   _connectingToWifi = false;
   _nextWifiConnectionAttemptMillis = 500;
   _lastWifiConnectionAttemptMillis = 0;
-  _wifiReconnectionAttemptDelay = 60 * 1000;
+  _wifiReconnectionAttemptDelay = 30 * 1000;
   _failedWifiConnectionAttemptCount = 0;
   _max_uptime_server_minutes = 3; //nur wenn aktiv!
 
@@ -44,6 +44,7 @@ _mqttPassword(mqttPassword)
   _drasticResetOnConnectionFailures = false;
   _connectionEstablishedCallback = onConnectionEstablished;
   _connectionEstablishedCount = 0;
+  _NoWifiCallback = onNoWifiConnection;
 }
 
 EspMQTTClient::~EspMQTTClient()
@@ -132,7 +133,7 @@ void EspMQTTClient::loop()
   _wifiManager.process();
   bool wifiStateChanged = handleWiFi();
   // If there is a change in the wifi connection state, don't handle the mqtt connection state right away.
-  // We will wait at least one lopp() call. This prevent the library from doing too much thing in the same loop() call.
+  // We will wait at least one loop() call. This prevent the library from doing too much thing in the same loop() call.
   if(wifiStateChanged)
     return;
 
@@ -142,7 +143,14 @@ void EspMQTTClient::loop()
     return;
 
   if (!_OTA_via_MQTT && ((_sleep && getConnectionEstablishedCount() > 0) || (_sleep && _failedWifiConnectionAttemptCount > 1)) && !_wifiManager.WifiAP_active(_max_uptime_server_minutes)){
-    //only go to sleep if connected or at least one reconnection attempt was made to prevent too early sleep)
+    //only go to sleep if:
+    // - No OTA request via MQTT active
+    // AND
+    // (- sleep activated AND was connected at least onConnectionEstablished
+    // OR
+    // - sleep activated AND at least one reconnection attempt was made)
+    // AND
+    // - Wifi_AP is not active (deactivates itself after defined timeout)
     _loopcount++;
     if(_loopcount > 10 && (millis() - _looptime_millis) > 5000){//loop at least 10 times and at least for 5s
       if(_enableDebugMessages){
@@ -158,14 +166,14 @@ void EspMQTTClient::loop()
 bool EspMQTTClient::handleWiFi()
 {
   // When it's the first call, reset the wifi radio and schedule the wifi connection
-  static bool firstLoopCall = true;
-  if(_handleWiFi && firstLoopCall)
-  {
-    WiFi.disconnect(true);
-    _nextWifiConnectionAttemptMillis = millis() + 500;
-    firstLoopCall = false;
-    return true;
-  }
+  // static bool firstLoopCall = true;
+  // if(_handleWiFi && firstLoopCall)
+  // {
+  //   // WiFi.disconnect(true);
+  //   _nextWifiConnectionAttemptMillis = millis() + 500;
+  //   firstLoopCall = false;
+  //   return true;
+  // }
 
   // Get the current connection status
   bool isWifiConnected = (WiFi.status() == WL_CONNECTED);
@@ -176,7 +184,7 @@ bool EspMQTTClient::handleWiFi()
   // Connection established
   if (isWifiConnected && !_wifiConnected)
   {
-    onWiFiConnectionEstablished();
+    onWiFiConnectionEstablished(); //prints info
     _connectingToWifi = false;
 
     // At least 500 miliseconds of waiting before an mqtt connection attempt.
@@ -186,16 +194,18 @@ bool EspMQTTClient::handleWiFi()
     _nextMqttConnectionAttemptMillis = millis() + 500;
   }
 
-  // Connection in progress
+  // Connection in progress and WifiAP NOT active
   else if(_connectingToWifi)
   {
       if((WiFi.status() == WL_CONNECT_FAILED || millis() - _lastWifiConnectionAttemptMillis >= _wifiReconnectionAttemptDelay) && 
           !_wifiManager.WifiAP_active(_max_uptime_server_minutes))
       {
-        if(_enableDebugMessages)
-          Serial.printf("WiFi! Connection attempt failed, delay expired. (%fs). \n", millis()/1000.0);
-
-        WiFi.disconnect(true);
+        if(_enableDebugMessages){
+          Serial.printf("\nWiFi! Connection attempt failed, delay expired. (%fs). \n", millis()/1000.0);
+        }
+        _NoWifiCallback();
+        // WiFi.disconnect(true);
+        _wifiManager.disconnect();
         MDNS.end();
 
         _nextWifiConnectionAttemptMillis = millis() + 500;
@@ -299,7 +309,8 @@ bool EspMQTTClient::handleMQTT()
         if (_enableDebugMessages)
           Serial.println("MQTT!: Can't connect to broker after too many attempt, resetting WiFi ...");
 
-        WiFi.disconnect(true);
+        // WiFi.disconnect(true);
+        _wifiManager.disconnect();
         MDNS.end();
         _nextWifiConnectionAttemptMillis = millis() + 500;
 
@@ -362,7 +373,8 @@ void EspMQTTClient::onWiFiConnectionLost()
   // If we handle wifi, we force disconnection to clear the last connection
   if (_handleWiFi)
   {
-    WiFi.disconnect(true);
+    // WiFi.disconnect(true);
+    _wifiManager.disconnect();
     MDNS.end();
   }
 }
@@ -430,12 +442,14 @@ bool EspMQTTClient::publish(const char* measurement, float data, bool persist, c
 
   if (_enableDebugMessages)
   {
-    if(success)
+    if(success){
       Serial.printf("MQTT << [%s] %s\n", topic_mqtt, to_send);
-    else
+    }
+    else{
       Serial.println("MQTT! publish failed, is the message too long ? (see setMaxPacketSize())"); // This can occurs if the message is too long according to the maximum defined in PubsubClient.h
       Serial.println(topic_mqtt);
       Serial.println(to_send);
+    }
   }
   return success;
 }
@@ -585,13 +599,18 @@ void EspMQTTClient::OTA_via_MQTT_callback(const String &topicStr, byte* payload,
 void EspMQTTClient::connectToWifi()
 {
   if(!_wifiManager.WifiAP_active(_max_uptime_server_minutes)){
-    WiFi.mode(WIFI_STA);
+    // WiFi.mode(WIFI_STA);
     _wifiManager.setConfigPortalBlocking(false);
     _wifiManager.setDebugOutput(true);
     // _wifiManager.setConfigPortalTimeout(60); //timeout in sekunden, danach geht code einfach weiter (ohne internet)
     _wifiManager.autoConnect(_mqttClientName,"MeinWifiManagerPasswort");
     if (_enableDebugMessages)
-      Serial.printf("\nWiFi: Connecting to WIFI... (%fs) \n", millis()/1000.0);
+      if(_wifiManager.WifiAP_active(_max_uptime_server_minutes)){
+        Serial.printf("\nWiFi: Web portal started");
+      }
+      else{
+        Serial.printf("\nWiFi: Connecting to WIFI... (%fs) \n", millis()/1000.0);
+      }
   }
 }
 
