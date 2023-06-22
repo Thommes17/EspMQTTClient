@@ -602,6 +602,7 @@ void EspMQTTClient::connectToWifi()
     // WiFi.mode(WIFI_STA);
     _wifiManager.setConfigPortalBlocking(false);
     _wifiManager.setDebugOutput(true);
+    _wifiManager.setHostname(_mqttClientName);
     // _wifiManager.setConfigPortalTimeout(60); //timeout in sekunden, danach geht code einfach weiter (ohne internet)
     _wifiManager.autoConnect(_mqttClientName,"MeinWifiManagerPasswort");
     if (_enableDebugMessages)
