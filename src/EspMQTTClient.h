@@ -121,6 +121,8 @@ public:
   void enableLastWillMessage(const char* topic, const char* message, const bool retain = false); // Must be set before the first loop() call.
   void enableDrasticResetOnConnectionFailures() {_drasticResetOnConnectionFailures = true;} // Can be usefull in special cases where the ESP board hang and need resetting (#59)
 
+  bool is_Wifi_AP_active();
+
   /// Main loop, to call at each sketch loop()
   void loop();
 

@@ -114,6 +114,9 @@ void EspMQTTClient::enableLastWillMessage(const char* topic, const char* message
 }
 
 
+bool EspMQTTClient::is_Wifi_AP_active(){
+  return(_wifiManager.WifiAP_active(_max_uptime_server_minutes));
+}
 // =============== Main loop / connection state handling =================
 
 void EspMQTTClient::go_to_sleep(unsigned int deepsleeptime_minutes){
