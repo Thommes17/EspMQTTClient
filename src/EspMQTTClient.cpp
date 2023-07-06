@@ -388,7 +388,9 @@ void EspMQTTClient::onMQTTConnectionEstablished()
   if (_publish_Wifi_RSSI){
     publish("WIFI_RSSI",WiFi.RSSI(),false);
   }
-  subscribe("OTA_Update",1, [this](const String &topicStr, byte* payload, unsigned int length) {this->OTA_via_MQTT_callback(topicStr, payload, length);});
+  if(_enableOTA){
+    subscribe("OTA_Update",1, [this](const String &topicStr, byte* payload, unsigned int length) {this->OTA_via_MQTT_callback(topicStr, payload, length);});
+  }
   _connectionEstablishedCallback();
 }
 
@@ -498,7 +500,7 @@ bool EspMQTTClient::subscribe(const char* measurement,  int qos, MessageReceived
     if(success)
       Serial.printf("MQTT: Subscribed to [%s]\n", topic);
     else
-      Serial.println("MQTT! subscribe failed");
+      Serial.printf("MQTT: subscribe FAILED to topic [%s]\n", topic);
   }
 
   return success;
