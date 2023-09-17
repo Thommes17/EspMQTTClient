@@ -1,5 +1,10 @@
 #include "EspMQTTClient.h"
 
+// Required for LIGHT_SLEEP_T delay mode
+extern "C" {
+  #include "user_interface.h"
+}
+
 EspMQTTClient::EspMQTTClient(const char* location, const char* mqttUsername, const char* mqttPassword) : 
 _mqttClientName(location),
 _mqttUsername(mqttUsername),
@@ -28,6 +33,8 @@ _mqttPassword(mqttPassword)
   _mqttClient.setCallback([this](char* topic, byte* payload, unsigned int length) {this->mqttMessageReceivedCallback(topic, payload, length);});
   _failedMQTTConnectionAttemptCount = 0;
   _sleep = false;
+  _sleep_mode_light = false;
+  _light_sleep_callback = nullptr;
   _loopcount = 0;
   _looptime_millis = 0;
   _publish_Wifi_RSSI = false;
@@ -119,9 +126,16 @@ bool EspMQTTClient::is_Wifi_AP_active(){
 }
 // =============== Main loop / connection state handling =================
 
-void EspMQTTClient::go_to_sleep(unsigned int deepsleeptime_minutes){
+void EspMQTTClient::set_light_sleep(unsigned int wake_pin, bool wake_on_high, void(*light_sleep_callback)()){
+  _sleep_mode_light = true;
+  _wake_pin = wake_pin;
+  _wake_on_high = wake_on_high;
+  _light_sleep_callback = light_sleep_callback;
+}
+
+void EspMQTTClient::go_to_sleep(float sleeptime_minutes){
   if(!_sleep){
-    _deepsleeptime_minutes = deepsleeptime_minutes;
+    _sleeptime_minutes = sleeptime_minutes;
     _loopcount = 0;
     _looptime_millis = millis(); 
     _sleep = true;
@@ -159,7 +173,26 @@ void EspMQTTClient::loop()
       if(_enableDebugMessages){
         Serial.println("Going to sleep");
       }
-      ESP.deepSleep(_deepsleeptime_minutes*60000000);
+      if(_sleep_mode_light){ //light_sleep
+        Serial.println("Enter light sleep mode");
+        if(_wake_on_high){
+          gpio_pin_wakeup_enable(_wake_pin, GPIO_PIN_INTR_HILEVEL);
+        }
+        else{
+          gpio_pin_wakeup_enable(_wake_pin, GPIO_PIN_INTR_LOLEVEL);
+        }
+        wifi_station_disconnect();//new
+        wifi_set_opmode(NULL_MODE);
+        wifi_fpm_set_sleep_type(LIGHT_SLEEP_T);
+        wifi_fpm_open();
+        wifi_fpm_set_wakeup_cb(_light_sleep_callback);
+        wifi_fpm_do_sleep(0xFFFFFFF);
+        _sleep  = false;
+        delay(1000);
+      }
+      else{ //going into deep sleep
+        ESP.deepSleep(_sleeptime_minutes*60000000);
+      }
       delay(100);
     }
   }
@@ -610,13 +643,14 @@ void EspMQTTClient::connectToWifi()
     _wifiManager.setHostname(_mqttClientName);
     // _wifiManager.setConfigPortalTimeout(60); //timeout in sekunden, danach geht code einfach weiter (ohne internet)
     _wifiManager.autoConnect(_mqttClientName,"MeinWifiManagerPasswort");
-    if (_enableDebugMessages)
+    if (_enableDebugMessages){
       if(_wifiManager.WifiAP_active(_max_uptime_server_minutes)){
         Serial.printf("\nWiFi: Web portal started");
       }
       else{
         Serial.printf("\nWiFi: Connecting to WIFI... (%fs) \n", millis()/1000.0);
       }
+    }
   }
 }
 
@@ -804,4 +838,20 @@ void EspMQTTClient::mqttMessageReceivedCallback(char* topic, byte* payload, unsi
         _topicSubscriptionList[i].callbackWithTopic(topicStr, payload, length); // Call the callback
     }
   }
+}
+
+float EspMQTTClient::Taupunktberechnung (float temp, float humid){
+  float a, b;
+  if (temp >= 0) {
+    a = 7.5;
+    b = 237.3;
+  } else {
+    a = 7.6;
+    b = 240.7;
+  }
+  float sgp = 6.1078 * pow(10, (a * temp) / (b + temp));
+  float gp = (humid / 100) * sgp;
+  float v = log10(gp / 6.1078);
+  float Taupunkt = (b * v) / (a - v);
+  return(Taupunkt);
 }

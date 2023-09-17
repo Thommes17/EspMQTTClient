@@ -42,7 +42,7 @@ typedef std::function<void()> DelayedExecutionCallback;
 class EspMQTTClient
 {
 private:
-  unsigned int _deepsleeptime_minutes;
+  float _sleeptime_minutes;
 
   // Wifi related
   bool _handleWiFi;
@@ -61,9 +61,9 @@ private:
   unsigned long _nextMqttConnectionAttemptMillis;
   unsigned int _mqttReconnectionAttemptDelay;
   const char* _mqttServerIp = "192.168.178.70";
+  const char* _mqttClientName;
   const char* _mqttUsername;
   const char* _mqttPassword;
-  const char* _mqttClientName;
   uint16_t _mqttServerPort = 1883;
   bool _mqttCleanSession;
   char* _mqttLastWillTopic;
@@ -73,6 +73,10 @@ private:
   unsigned int _loopcount;
   unsigned long _looptime_millis;
   bool _sleep;
+  bool _sleep_mode_light;
+  void (*_light_sleep_callback)(void);
+  unsigned int _wake_pin;
+  bool _wake_on_high;
   bool _publish_Wifi_RSSI;
 
   PubSubClient _mqttClient;
@@ -140,7 +144,9 @@ public:
     _mqttPassword   = password;
     _mqttServerPort = port;
   };
-  void go_to_sleep(unsigned int deepsleeptime_minutes);
+  void go_to_sleep(float deepsleeptime_minutes);
+  void set_light_sleep(unsigned int wake_pin, bool wake_on_high, void(*light_sleep_callback)());
+  inline void set_deepsleep() {_sleep_mode_light = false;};
   inline void enable_publish_Wifi_RSSI() {_publish_Wifi_RSSI = true;};
   float payload_to_float(byte* payload, unsigned int length);
   void OTA_via_MQTT_callback(const String &topicStr, byte* payload, unsigned int length);
@@ -169,6 +175,8 @@ public:
 
   // Allow to set the minimum delay between each WiFi reconnection attempt. 60 seconds by default.
   inline void setWifiReconnectionAttemptDelay(const unsigned int milliseconds) { _wifiReconnectionAttemptDelay = milliseconds; };
+
+  float Taupunktberechnung (float temp, float humid);
 
 private:
   bool handleWiFi();
