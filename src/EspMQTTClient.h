@@ -96,6 +96,7 @@ private:
   WebServer* _httpServer;
   ESPHTTPUpdateServer* _httpUpdater;
   bool _enableOTA;
+  bool _enableDebugBlink;
   bool _OTA_via_MQTT;
 
   // Delayed execution related
@@ -121,6 +122,7 @@ public:
   void enableHTTPWebUpdater(const char* username, const char* password, const char* address = "/"); // Activate the web updater, must be set before the first loop() call.
   void enableHTTPWebUpdater(const char* address = "/"); // Will set user and password equal to _mqttUsername and _mqttPassword
   void enableOTA(const char *password = NULL, const uint16_t port = 0); // Activate OTA updater, must be set before the first loop() call.
+  void enableDebugBlink(); //Must be set before the first loop() call.
   void enableMQTTPersistence(); // Tell the broker to establish a persistent connection. Disabled by default. Must be called before the first loop() execution
   void enableLastWillMessage(const char* topic, const char* message, const bool retain = false); // Must be set before the first loop() call.
   void enableDrasticResetOnConnectionFailures() {_drasticResetOnConnectionFailures = true;} // Can be usefull in special cases where the ESP board hang and need resetting (#59)
@@ -133,7 +135,7 @@ public:
   // MQTT related
   bool setMaxPacketSize(const uint16_t size); // Pubsubclient >= 2.8; override the default value of MQTT_MAX_PACKET_SIZE
 
-  bool publish(const char* measurement, float data, bool persist = true, const char* custom_location = NULL);
+  bool publish(const char* measurement, float data, bool persist = true, const char* custom_location = NULL, const char* custom_topic = NULL, const char* custom_payload_string = NULL);
   bool subscribe(const char* measurement,  int qos, MessageReceivedCallbackWithTopic messageReceivedCallbackWithTopic, const char* custom_location = NULL);
   bool unsubscribe(const String &topic);   //Unsubscribes from the topic, if it exists, and removes it from the CallbackList.
   void setKeepAlive(uint16_t keepAliveSeconds); // Change the keepalive interval (15 seconds by default)
@@ -191,6 +193,7 @@ private:
   void processDelayedExecutionRequests();
   bool mqttTopicMatch(const String &topic1, const String &topic2);
   void mqttMessageReceivedCallback(char* topic, byte* payload, unsigned int length);
+  void blink(int counter);
 };
 
 #endif

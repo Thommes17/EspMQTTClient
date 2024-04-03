@@ -1,9 +1,26 @@
 #include "EspMQTTClient.h"
 
+
+#if defined(ESP8266)
 // Required for LIGHT_SLEEP_T delay mode
 extern "C" {
   #include "user_interface.h"
 }
+#elif defined(ESP32)
+#pragma message "ESP32 stuff happening!"
+#else
+#error "This ain't a ESP8266 or ESP32, dumbo!"
+#endif
+
+//blink:
+// LED on => OTA
+// 1x kurz: Wifi connection in progress
+// 1x lang: entering deepsleep
+// 2x: connecting to MQTT client
+// 3x: sleep activated
+// 5x: WiFi Connection attempt failed, delay expired
+// 10x: WiFi connection lost
+// 15x: MQTT connection lost
 
 EspMQTTClient::EspMQTTClient(const char* location, const char* mqttUsername, const char* mqttPassword) : 
 _mqttClientName(location),
@@ -44,6 +61,7 @@ _mqttPassword(mqttPassword)
   _httpServer = NULL;
   _httpUpdater = NULL;
   _enableOTA = false;
+  _enableDebugBlink = false;
   _OTA_via_MQTT = false;
 
   // other
@@ -103,9 +121,41 @@ void EspMQTTClient::enableOTA(const char *password, const uint16_t port)
     ArduinoOTA.setPassword(password);
   else if (_mqttPassword != NULL)
     ArduinoOTA.setPassword(_mqttPassword);
+  else
+    ArduinoOTA.setPassword(_mqttClientName);
 
   if (port)
     ArduinoOTA.setPort(port);
+}
+
+void EspMQTTClient::enableDebugBlink()
+{
+  _enableDebugBlink = true;
+  pinMode(LED_BUILTIN, OUTPUT);
+  digitalWrite(LED_BUILTIN, HIGH);
+}
+
+void EspMQTTClient::blink(int counter){
+  if(_enableDebugMessages && counter >= 0){
+    Serial.print("Blinking: ");
+    Serial.println(counter);
+  }
+  if(counter < 0){
+    digitalWrite(LED_BUILTIN, LOW);
+  }
+  else if (counter == 0){
+    digitalWrite(LED_BUILTIN, HIGH);
+    delay(300);
+  }
+  else{
+    for(int i=0; i<counter; i++){
+      digitalWrite(LED_BUILTIN, LOW);
+      delay(150);
+      digitalWrite(LED_BUILTIN, HIGH);
+      delay(150);
+    }
+  }
+  delay(300);
 }
 
 void EspMQTTClient::enableMQTTPersistence()
@@ -158,6 +208,10 @@ void EspMQTTClient::loop()
   bool mqttStateChanged = handleMQTT();
   if(mqttStateChanged)
     return;
+  
+  if(_OTA_via_MQTT){
+    blink(-1); //LED on
+  }
 
   if (!_OTA_via_MQTT && ((_sleep && getConnectionEstablishedCount() > 0) || (_sleep && _failedWifiConnectionAttemptCount > 1)) && !_wifiManager.WifiAP_active(_max_uptime_server_minutes)){
     //only go to sleep if:
@@ -172,25 +226,34 @@ void EspMQTTClient::loop()
     if(_loopcount > 10 && (millis() - _looptime_millis) > 5000){//loop at least 10 times and at least for 5s
       if(_enableDebugMessages){
         Serial.println("Going to sleep");
+        blink(3);
       }
+      
       if(_sleep_mode_light){ //light_sleep
-        Serial.println("Enter light sleep mode");
-        if(_wake_on_high){
-          gpio_pin_wakeup_enable(_wake_pin, GPIO_PIN_INTR_HILEVEL);
-        }
-        else{
-          gpio_pin_wakeup_enable(_wake_pin, GPIO_PIN_INTR_LOLEVEL);
-        }
-        wifi_station_disconnect();//new
-        wifi_set_opmode(NULL_MODE);
-        wifi_fpm_set_sleep_type(LIGHT_SLEEP_T);
-        wifi_fpm_open();
-        wifi_fpm_set_wakeup_cb(_light_sleep_callback);
-        wifi_fpm_do_sleep(0xFFFFFFF);
-        _sleep  = false;
-        delay(1000);
+        #if defined(ESP8266)
+          Serial.println("Enter light sleep mode");
+          if(_wake_on_high){
+            gpio_pin_wakeup_enable(_wake_pin, GPIO_PIN_INTR_HILEVEL);
+          }
+          else{
+            gpio_pin_wakeup_enable(_wake_pin, GPIO_PIN_INTR_LOLEVEL);
+          }
+          wifi_station_disconnect();//new
+          wifi_set_opmode(NULL_MODE);
+          wifi_fpm_set_sleep_type(LIGHT_SLEEP_T);
+          wifi_fpm_open();
+          wifi_fpm_set_wakeup_cb(_light_sleep_callback);
+          wifi_fpm_do_sleep(0xFFFFFFF);
+          _sleep  = false;
+          delay(1000);
+        #else //defined(ESP32)
+          Serial.println("Enter deep sleep mode");
+          ESP.deepSleep(_sleeptime_minutes*60000000);
+        #endif
       }
       else{ //going into deep sleep
+        Serial.println("Enter deep sleep mode");
+        blink(-1);
         ESP.deepSleep(_sleeptime_minutes*60000000);
       }
       delay(100);
@@ -233,25 +296,28 @@ bool EspMQTTClient::handleWiFi()
   // Connection in progress and WifiAP NOT active
   else if(_connectingToWifi)
   {
-      if((WiFi.status() == WL_CONNECT_FAILED || millis() - _lastWifiConnectionAttemptMillis >= _wifiReconnectionAttemptDelay) && 
-          !_wifiManager.WifiAP_active(_max_uptime_server_minutes))
-      {
-        if(_enableDebugMessages){
-          Serial.printf("\nWiFi! Connection attempt failed, delay expired. (%fs). \n", millis()/1000.0);
-        }
-        _NoWifiCallback();
-        // WiFi.disconnect(true);
-        _wifiManager.disconnect();
-        MDNS.end();
-
-        _nextWifiConnectionAttemptMillis = millis() + 500;
-        _connectingToWifi = false;
+    blink(1);
+    if((WiFi.status() == WL_CONNECT_FAILED || millis() - _lastWifiConnectionAttemptMillis >= _wifiReconnectionAttemptDelay) && 
+        !_wifiManager.WifiAP_active(_max_uptime_server_minutes))
+    {
+      blink(5);
+      if(_enableDebugMessages){
+        Serial.printf("\nWiFi! Connection attempt failed, delay expired. (%fs). \n", millis()/1000.0);
       }
+      _NoWifiCallback();
+      // WiFi.disconnect(true);
+      _wifiManager.disconnect();
+      MDNS.end();
+
+      _nextWifiConnectionAttemptMillis = millis() + 500;
+      _connectingToWifi = false;
+    }
   }
 
   // Connection lost
   else if (!isWifiConnected && _wifiConnected)
   {
+    blink(10);
     onWiFiConnectionLost();
 
     if(_handleWiFi)
@@ -318,11 +384,13 @@ bool EspMQTTClient::handleMQTT()
   {
     onMQTTConnectionLost();
     _nextMqttConnectionAttemptMillis = millis() + _mqttReconnectionAttemptDelay;
+    blink(15);
   }
 
   // It's time to connect to the MQTT broker
   else if (isWifiConnected() && _nextMqttConnectionAttemptMillis > 0 && millis() >= _nextMqttConnectionAttemptMillis)
   {
+    blink(2);
     // Connect to MQTT broker
     if(connectToMqttBroker())
     {
@@ -449,7 +517,7 @@ bool EspMQTTClient::setMaxPacketSize(const uint16_t size)
   return success;
 }
 
-bool EspMQTTClient::publish(const char* measurement, float data, bool persist, const char* custom_location)
+bool EspMQTTClient::publish(const char* measurement, float data, bool persist, const char* custom_location, const char* custom_topic, const char* custom_payload_string)
 {
   // Do not try to publish if MQTT is not connected.
   if(!isConnected())
@@ -466,9 +534,6 @@ bool EspMQTTClient::publish(const char* measurement, float data, bool persist, c
       location = custom_location;
   }
 
-  String dummy = String(data);
-  char to_send[dummy.length() + 1];
-  dummy.toCharArray(to_send, dummy.length() + 1);
   char topic[strlen(location)+strlen(measurement)+6+1];
   strcpy(topic, "home/");
   strcat(topic, location);
@@ -476,7 +541,17 @@ bool EspMQTTClient::publish(const char* measurement, float data, bool persist, c
   strcat(topic, measurement);
   const char* topic_mqtt = topic;
 
-  bool success = _mqttClient.publish(topic_mqtt, to_send, persist);
+  String dummy = String(data);
+  char to_send[dummy.length() + 1];
+  dummy.toCharArray(to_send, dummy.length() + 1);
+
+  bool success;
+  if(custom_topic != NULL && custom_payload_string != NULL){
+    success = _mqttClient.publish(custom_topic, custom_payload_string, persist);
+  }
+  else{
+    success = _mqttClient.publish(topic_mqtt, to_send, persist);
+  }
 
   if (_enableDebugMessages)
   {
@@ -625,6 +700,7 @@ void EspMQTTClient::OTA_via_MQTT_callback(const String &topicStr, byte* payload,
   }
   else{
     _OTA_via_MQTT = false; //important! otherwise, it will be in OTA mode forever even if deactivated via MQTT 
+    blink(0); // LED off
     if(_enableDebugMessages){
       Serial.println("OTA via MQTT disabled");
     }
