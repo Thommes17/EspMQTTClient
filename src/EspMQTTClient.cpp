@@ -136,26 +136,28 @@ void EspMQTTClient::enableDebugBlink()
 }
 
 void EspMQTTClient::blink(int counter){
-  if(_enableDebugMessages && counter >= 0){
-    Serial.print("Blinking: ");
-    Serial.println(counter);
-  }
-  if(counter < 0){
-    digitalWrite(LED_BUILTIN, LOW);
-  }
-  else if (counter == 0){
-    digitalWrite(LED_BUILTIN, HIGH);
+  if(_enableDebugBlink){
+    if(_enableDebugMessages && counter >= 0){
+      Serial.print("Blinking: ");
+      Serial.println(counter);
+    }
+    if(counter < 0){
+      digitalWrite(LED_BUILTIN, LOW);
+    }
+    else if (counter == 0){
+      digitalWrite(LED_BUILTIN, HIGH);
+      delay(300);
+    }
+    else{
+      for(int i=0; i<counter; i++){
+        digitalWrite(LED_BUILTIN, LOW);
+        delay(150);
+        digitalWrite(LED_BUILTIN, HIGH);
+        delay(150);
+      }
+    }
     delay(300);
   }
-  else{
-    for(int i=0; i<counter; i++){
-      digitalWrite(LED_BUILTIN, LOW);
-      delay(150);
-      digitalWrite(LED_BUILTIN, HIGH);
-      delay(150);
-    }
-  }
-  delay(300);
 }
 
 void EspMQTTClient::enableMQTTPersistence()
@@ -213,7 +215,8 @@ void EspMQTTClient::loop()
     blink(-1); //LED on
   }
 
-  if (!_OTA_via_MQTT && ((_sleep && getConnectionEstablishedCount() > 0) || (_sleep && _failedWifiConnectionAttemptCount > 1)) && !_wifiManager.WifiAP_active(_max_uptime_server_minutes)){
+  if (!_OTA_via_MQTT && ((_sleep && getConnectionEstablishedCount() > 0) || (_sleep && _failedWifiConnectionAttemptCount > 1)) && !_wifiManager.WifiAP_active(_max_uptime_server_minutes))
+  {
     //only go to sleep if:
     // - No OTA request via MQTT active
     // AND
@@ -226,9 +229,8 @@ void EspMQTTClient::loop()
     if(_loopcount > 10 && (millis() - _looptime_millis) > 5000){//loop at least 10 times and at least for 5s
       if(_enableDebugMessages){
         Serial.println("Going to sleep");
-        blink(3);
       }
-      
+      blink(3);
       if(_sleep_mode_light){ //light_sleep
         #if defined(ESP8266)
           Serial.println("Enter light sleep mode");
@@ -248,6 +250,7 @@ void EspMQTTClient::loop()
           delay(1000);
         #else //defined(ESP32)
           Serial.println("Enter deep sleep mode");
+          blink(-1);
           ESP.deepSleep(_sleeptime_minutes*60000000);
         #endif
       }
@@ -302,7 +305,7 @@ bool EspMQTTClient::handleWiFi()
     {
       blink(5);
       if(_enableDebugMessages){
-        Serial.printf("\nWiFi! Connection attempt failed, delay expired. (%fs). \n", millis()/1000.0);
+        Serial.printf("\nWiFi! Connection attempt failed, delay expired. (%lu ms). \n", millis());
       }
       _NoWifiCallback();
       // WiFi.disconnect(true);
@@ -451,7 +454,7 @@ void EspMQTTClient::onWiFiConnectionEstablished()
 {
     _failedWifiConnectionAttemptCount = 0;
     if (_enableDebugMessages)
-      Serial.printf("WiFi: Connected (%fs), ip : %s \n", millis()/1000.0, WiFi.localIP().toString().c_str());
+      Serial.printf("WiFi: Connected (%lu ms), IP : %s \n", millis(), WiFi.localIP().toString().c_str());
 
     // Config of web updater
     if (_httpServer != NULL)
@@ -472,7 +475,7 @@ void EspMQTTClient::onWiFiConnectionEstablished()
 void EspMQTTClient::onWiFiConnectionLost()
 {
   if (_enableDebugMessages)
-    Serial.printf("WiFi! Lost connection (%fs). \n", millis()/1000.0);
+    Serial.printf("WiFi! Lost connection (%lu ms). \n", millis());
 
   // If we handle wifi, we force disconnection to clear the last connection
   if (_handleWiFi)
@@ -499,7 +502,7 @@ void EspMQTTClient::onMQTTConnectionLost()
 {
   if (_enableDebugMessages)
   {
-    Serial.printf("MQTT! Lost connection (%fs). \n", millis()/1000.0);
+    Serial.printf("MQTT! Lost connection (%lu ms). \n", millis());
     Serial.printf("MQTT: Retrying to connect in %i seconds. \n", _mqttReconnectionAttemptDelay / 1000);
   }
 }
@@ -724,7 +727,7 @@ void EspMQTTClient::connectToWifi()
         Serial.printf("\nWiFi: Web portal started");
       }
       else{
-        Serial.printf("\nWiFi: Connecting to WIFI... (%fs) \n", millis()/1000.0);
+        Serial.printf("\nWiFi: Connecting to WIFI... (%lu ms) \n", millis());
       }
     }
   }
@@ -740,9 +743,9 @@ bool EspMQTTClient::connectToMqttBroker()
     if (_enableDebugMessages)
     {
       if (_mqttUsername)
-        Serial.printf("MQTT: Connecting to broker \"%s\" with client name \"%s\" and username \"%s\" ... (%fs)", _mqttServerIp, _mqttClientName, _mqttUsername, millis()/1000.0);
+        Serial.printf("MQTT: Connecting to broker \"%s\" with client name \"%s\" and username \"%s\" ... (%lu ms)", _mqttServerIp, _mqttClientName, _mqttUsername, millis());
       else
-        Serial.printf("MQTT: Connecting to broker \"%s\" with client name \"%s\" ... (%fs)", _mqttServerIp, _mqttClientName, millis()/1000.0);
+        Serial.printf("MQTT: Connecting to broker \"%s\" with client name \"%s\" ... (%lu ms)", _mqttServerIp, _mqttClientName, millis());
     }
 
     // explicitly set the server/port here in case they were not provided in the constructor
@@ -752,17 +755,17 @@ bool EspMQTTClient::connectToMqttBroker()
   else
   {
     if (_enableDebugMessages)
-      Serial.printf("MQTT: Broker server ip is not set, not connecting (%fs)\n", millis()/1000.0);
+      Serial.printf("MQTT: Broker server ip is not set, not connecting (%lu ms)\n", millis());
     success = false;
   }
 
   if (_enableDebugMessages)
   {
     if (success)
-      Serial.printf(" - ok. (%fs) \n", millis()/1000.0);
+      Serial.printf(" - ok. (%lu ms) \n", millis());
     else
     {
-      Serial.printf("unable to connect (%fs), reason: ", millis()/1000.0);
+      Serial.printf("unable to connect (%lu ms), reason: ", millis());
 
       switch (_mqttClient.state())
       {
